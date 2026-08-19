@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { apiFetch } from "@/lib/api";
 import { Badge } from "@/components/badge";
+import { PollingActionButton } from "@/components/polling-action-button";
 import { SubmitButton } from "@/components/submit-button";
 import {
   analyzeDocument,
@@ -163,20 +164,24 @@ export default async function AuditPeriodDocumentsPage({
             <span className="flex items-center gap-3">
               {ANALYZABLE_DOCUMENT_TYPES.has(doc.document_type) &&
                 doc.extraction_status === "complete" && (
-                  <form action={analyzeDocument.bind(null, orgId, auditPeriodId, doc.id)}>
-                    <SubmitButton
-                      pendingLabel="Analyzing…"
-                      className="text-primary hover:underline disabled:opacity-50"
-                    >
-                      Analyze
-                    </SubmitButton>
-                  </form>
+                  <PollingActionButton
+                    kind="analyze"
+                    action={analyzeDocument.bind(null, orgId, auditPeriodId, doc.id)}
+                    statusUrl={`/organizations/${orgId}/audit-periods/${auditPeriodId}/documents/${doc.id}/analysis-status`}
+                    pendingLabel="Analyzing…"
+                    className="text-primary hover:underline disabled:opacity-50"
+                  >
+                    Analyze
+                  </PollingActionButton>
                 )}
               {doc.document_type === "internal_control_framework" && (
                 <form action={parseInternalControls.bind(null, orgId, auditPeriodId, doc.id)}>
-                  <button type="submit" className="text-primary hover:underline">
+                  <SubmitButton
+                    pendingLabel="Parsing…"
+                    className="text-primary hover:underline disabled:opacity-50"
+                  >
                     Parse internal controls
-                  </button>
+                  </SubmitButton>
                 </form>
               )}
               <a
@@ -219,14 +224,15 @@ export default async function AuditPeriodDocumentsPage({
               </form>
             )}
             {internalControls.length > 0 && (
-              <form action={mapControls.bind(null, orgId, auditPeriodId)}>
-                <SubmitButton
-                  pendingLabel="Mapping…"
-                  className="text-sm text-primary hover:underline disabled:opacity-50"
-                >
-                  Map controls
-                </SubmitButton>
-              </form>
+              <PollingActionButton
+                kind="map-controls"
+                action={mapControls.bind(null, orgId, auditPeriodId)}
+                statusUrl={`/organizations/${orgId}/audit-periods/${auditPeriodId}/mapping-status`}
+                pendingLabel="Mapping…"
+                className="text-sm text-primary hover:underline disabled:opacity-50"
+              >
+                Map controls
+              </PollingActionButton>
             )}
           </div>
         </div>

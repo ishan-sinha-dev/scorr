@@ -5,7 +5,7 @@ from app.core.config import settings
 from app.core.security import AuthUser, get_current_user
 from app.core.supabase import get_current_user_client
 from app.schemas.document_pages import DocumentPageOut
-from app.schemas.documents import DocumentOut, DocumentType
+from app.schemas.documents import AnalysisStatusOut, DocumentOut, DocumentType
 from app.services import documents as documents_service
 
 router = APIRouter(
@@ -92,3 +92,13 @@ def analyze_document(
         client, document_id=document_id, access_token=user.access_token
     )
     return {"status": "queued"}
+
+
+@router.get("/{document_id}/analysis-status", response_model=AnalysisStatusOut)
+def get_analysis_status(
+    organization_id: str,
+    audit_period_id: str,
+    document_id: str,
+    client: Client = Depends(get_current_user_client),
+) -> AnalysisStatusOut:
+    return documents_service.get_analysis_status(client, document_id=document_id)

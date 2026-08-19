@@ -1,9 +1,12 @@
+from typing import Literal
+
 from supabase import Client
 
+from app.repositories import analysis_jobs as analysis_jobs_repo
 from app.repositories import document_pages as document_pages_repo
 from app.repositories import documents as documents_repo
 from app.schemas.document_pages import DocumentPageOut
-from app.schemas.documents import DocumentOut, DocumentType
+from app.schemas.documents import AnalysisStatusOut, DocumentOut, DocumentType
 from app.services import audit_log
 from app.services.extraction import EXTRACTABLE_CONTENT_TYPES
 from app.workers.ai_extraction import run_structured_extraction
@@ -88,3 +91,25 @@ def analyze_document(client: Client, *, document_id: str, access_token: str) -> 
     are analyzable) lives in app/api/documents.py, matching where Phase 3's
     content-type/size validation lives — this function only enqueues."""
     run_structured_extraction.delay(document_id, access_token)
+
+
+def get_analysis_status(client: Client, *, document_id: str) -> AnalysisStatusOut:
+    """Polled by the frontend while an "Analyze" run is in flight. 'failed'
+    takes priority over 'requires_review' over 'complete' — a total-loss
+    chunk should never be hidden behind a partial success.
+    """
+    jobs = analysis_jobs_repo.list_jobs(client, document_id=document_id)
+    if not jobs:
+        return AnalysisStatusOut(status="not_started", processed_chunks=0)
+
+    statuses = {job["status"] for job in jobs}
+    status: Literal["processing", "failed", "requires_review", "complete"]
+    if statuses & {"pending", "processing"}:
+        status = "processing"
+    elif "failed" in statuses:
+        status = "failed"
+    elif "requires_review" in statuses:
+        status = "requires_review"
+    else:
+        status = "complete"
+    return AnalysisStatusOut(status=status, processed_chunks=len(jobs))

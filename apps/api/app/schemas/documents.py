@@ -25,3 +25,14 @@ class DocumentOut(BaseModel):
     # see database/migrations/0003_document_pages_extraction.sql.
     extraction_status: ExtractionStatus | None = None
     extraction_error: str | None = None
+
+
+class AnalysisStatusOut(BaseModel):
+    """Aggregated across Phase 5's per-chunk analysis_jobs rows — there's no
+    single-column status on documents for this stage (chunk count isn't
+    known until the Celery task starts), so this is derived at read time
+    rather than adding a column that could drift out of sync with the jobs
+    it summarizes."""
+
+    status: Literal["not_started", "processing", "complete", "requires_review", "failed"]
+    processed_chunks: int

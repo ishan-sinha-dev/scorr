@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,3 +38,16 @@ class ControlMappingOut(BaseModel):
     relevance_summary: str
     requires_review: bool
     created_at: datetime
+
+
+class MappingStatusOut(BaseModel):
+    """Aggregated across internal_controls.mapping_attempted_at, set once
+    per control by run_control_mapping regardless of outcome (Phase 7) —
+    the same field that already distinguishes "mapped, found nothing" from
+    "not mapped yet" for findings. No separate audit-period-level status
+    column, so this can't drift out of sync with the real per-control state.
+    """
+
+    status: Literal["not_started", "processing", "complete"]
+    mapped: int
+    total: int

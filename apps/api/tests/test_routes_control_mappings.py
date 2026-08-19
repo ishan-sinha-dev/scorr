@@ -75,3 +75,52 @@ def test_list_control_mappings_returns_rows() -> None:
 def test_control_mappings_require_authentication() -> None:
     response = client.get(f"{_BASE_URL}/control-mappings")
     assert response.status_code in (401, 403)
+
+
+def _fake_controls_client(mapping_attempted_flags: list[bool]) -> MagicMock:
+    fake_client = MagicMock()
+    query = fake_client.table.return_value.select.return_value.eq.return_value.order.return_value
+    query.execute.return_value.data = [
+        {"mapping_attempted_at": "2026-08-19T00:00:00Z" if attempted else None}
+        for attempted in mapping_attempted_flags
+    ]
+    return fake_client
+
+
+def test_mapping_status_reports_processing_partway_through() -> None:
+    fake_client = _fake_controls_client([True, False, False])
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[get_current_user_client] = lambda: fake_client
+    try:
+        response = client.get(f"{_BASE_URL}/mapping-status")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "processing", "mapped": 1, "total": 3}
+
+
+def test_mapping_status_reports_complete_once_every_control_is_attempted() -> None:
+    fake_client = _fake_controls_client([True, True])
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[get_current_user_client] = lambda: fake_client
+    try:
+        response = client.get(f"{_BASE_URL}/mapping-status")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "complete", "mapped": 2, "total": 2}
+
+
+def test_mapping_status_reports_not_started_before_any_control_is_attempted() -> None:
+    fake_client = _fake_controls_client([False, False])
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[get_current_user_client] = lambda: fake_client
+    try:
+        response = client.get(f"{_BASE_URL}/mapping-status")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "not_started", "mapped": 0, "total": 2}

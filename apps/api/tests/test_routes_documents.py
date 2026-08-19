@@ -282,3 +282,50 @@ def test_analyze_document_rejects_internal_control_framework() -> None:
 
     assert response.status_code == 422
     fake_task.delay.assert_not_called()
+
+
+def _fake_jobs_client(job_statuses: list[str]) -> MagicMock:
+    fake_client = MagicMock()
+    query = fake_client.table.return_value.select.return_value.eq.return_value.order.return_value
+    query.execute.return_value.data = [{"status": s} for s in job_statuses]
+    return fake_client
+
+
+def test_analysis_status_reports_processing_while_a_chunk_is_still_running() -> None:
+    fake_client = _fake_jobs_client(["complete", "processing"])
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[get_current_user_client] = lambda: fake_client
+    try:
+        response = client.get(f"{_UPLOAD_URL}/{_DOC_ID}/analysis-status")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "processing", "processed_chunks": 2}
+
+
+def test_analysis_status_reports_not_started_before_any_job_exists() -> None:
+    fake_client = _fake_jobs_client([])
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[get_current_user_client] = lambda: fake_client
+    try:
+        response = client.get(f"{_UPLOAD_URL}/{_DOC_ID}/analysis-status")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "not_started", "processed_chunks": 0}
+
+
+def test_analysis_status_reports_complete_once_every_chunk_is_terminal() -> None:
+    fake_client = _fake_jobs_client(["complete", "requires_review"])
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[get_current_user_client] = lambda: fake_client
+    try:
+        response = client.get(f"{_UPLOAD_URL}/{_DOC_ID}/analysis-status")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    # "requires_review" outranks a bare "complete" once nothing is still running.
+    assert response.json() == {"status": "requires_review", "processed_chunks": 2}
