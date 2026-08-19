@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { apiFetch } from "@/lib/api";
 import { Badge } from "@/components/badge";
+import { SubmitButton } from "@/components/submit-button";
 import {
   analyzeDocument,
   carryForwardControls,
@@ -163,9 +164,12 @@ export default async function AuditPeriodDocumentsPage({
               {ANALYZABLE_DOCUMENT_TYPES.has(doc.document_type) &&
                 doc.extraction_status === "complete" && (
                   <form action={analyzeDocument.bind(null, orgId, auditPeriodId, doc.id)}>
-                    <button type="submit" className="text-primary hover:underline">
+                    <SubmitButton
+                      pendingLabel="Analyzing…"
+                      className="text-primary hover:underline disabled:opacity-50"
+                    >
                       Analyze
-                    </button>
+                    </SubmitButton>
                   </form>
                 )}
               {doc.document_type === "internal_control_framework" && (
@@ -216,9 +220,12 @@ export default async function AuditPeriodDocumentsPage({
             )}
             {internalControls.length > 0 && (
               <form action={mapControls.bind(null, orgId, auditPeriodId)}>
-                <button type="submit" className="text-sm text-primary hover:underline">
+                <SubmitButton
+                  pendingLabel="Mapping…"
+                  className="text-sm text-primary hover:underline disabled:opacity-50"
+                >
                   Map controls
-                </button>
+                </SubmitButton>
               </form>
             )}
           </div>
