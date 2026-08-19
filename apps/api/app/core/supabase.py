@@ -1,5 +1,5 @@
 from fastapi import Depends
-from supabase import Client, create_client
+from supabase import Client, ClientOptions, create_client
 
 from app.core.config import settings
 from app.core.security import AuthUser, get_current_user
@@ -8,17 +8,23 @@ from app.core.security import AuthUser, get_current_user
 def get_user_client(access_token: str) -> Client:
     """Build a Supabase client scoped to the caller's own access token.
 
-    The anon key alone grants nothing; calling `.postgrest.auth(token)`
-    makes every subsequent `.table()`/`.rpc()` call on this client carry
-    the caller's own JWT, so Postgres RLS policies see the real `auth.uid()`
-    — this client can never see or write more than the calling user can.
+    The token is passed via ClientOptions(headers=...) at construction
+    time, not via `client.postgrest.auth(token)` after the fact — the
+    supabase-py Client lazily builds each sub-client (postgrest, storage,
+    functions) from `self.options.headers` the first time it's accessed,
+    and `.postgrest.auth()` only patches the already-built postgrest
+    sub-client's own headers. That left `client.storage` requests going
+    out with only the anon key and no user JWT, so Storage RLS policies
+    always saw an anonymous caller and rejected every upload. Setting the
+    Authorization header on ClientOptions up front means every sub-client
+    — not just postgrest — carries the caller's own JWT, so Postgres RLS
+    and Storage policies both see the real `auth.uid()`.
     """
     if not settings.supabase_url or not settings.supabase_anon_key:
         raise RuntimeError("SUPABASE_URL / SUPABASE_ANON_KEY are not configured")
 
-    client = create_client(settings.supabase_url, settings.supabase_anon_key)
-    client.postgrest.auth(access_token)
-    return client
+    options = ClientOptions(headers={"Authorization": f"Bearer {access_token}"})
+    return create_client(settings.supabase_url, settings.supabase_anon_key, options=options)
 
 
 def get_current_user_client(user: AuthUser = Depends(get_current_user)) -> Client:

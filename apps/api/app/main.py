@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from postgrest.exceptions import APIError
 
 from app.api.audit_periods import router as audit_periods_router
+from app.api.documents import router as documents_router
 from app.api.health import router as health_router
 from app.api.organizations import router as organizations_router
 from app.core.config import settings
@@ -12,6 +13,7 @@ app = FastAPI(title="SOCRR API", version="0.1.0")
 app.include_router(health_router)
 app.include_router(organizations_router)
 app.include_router(audit_periods_router)
+app.include_router(documents_router)
 
 
 @app.exception_handler(APIError)

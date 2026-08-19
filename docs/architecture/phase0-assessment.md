@@ -125,12 +125,10 @@ real API surface, first real UI.
 `apps/web` — `npm run build` and `npm run lint` both clean.
 
 **Known limitations** (documented, not silently skipped):
-- No live Supabase project yet, so the signup → login → create-org →
-  create-audit-period flow hasn't been exercised end-to-end through the
-  actual running apps — only the migration's SQL/RLS logic (via the local
-  Postgres check above) and each app's own code (via its own test suite)
-  have been verified in isolation. This closes once the user provides a
-  real Supabase project's URL/keys.
+- ~~No live Supabase project yet~~ — closed during Phase 3: the full
+  signup → login → create-org → create-audit-period → upload-document
+  flow has now been exercised end-to-end against a real Supabase project
+  (see the Phase 3 section below).
 - `create_organization()`'s PostgREST RPC response shape (single object vs.
   one-element array) is handled defensively in
   `app/repositories/organizations.py` but unverified against real
@@ -139,11 +137,107 @@ real API surface, first real UI.
   design it against) — natural next addition once Phase 2 is exercised
   for real.
 
+## Phase 3 — what was built (complete)
+
+Document upload and secure storage. Stops there deliberately — per the
+pipeline in the Architecture section above, classification, extraction,
+OCR, chunking, and embeddings are Phase 4/5, not this phase.
+
+- `database/migrations/0002_documents.sql`: `documents` (`document_type`
+  fixed to `soc_report` / `bridge_letter` / `internal_control_framework` —
+  no AI classification yet, chosen by the uploader), RLS reusing
+  `is_organization_member()`/`is_organization_owner()` from the Phase 2
+  migration rather than reimplementing them. A private `documents` Storage
+  bucket, with `storage.objects` policies that parse the organization ID
+  back out of the object path (`{organization_id}/{audit_period_id}/{document_id}-{file_name}`)
+  so table RLS and Storage access enforce the same tenant boundary from one
+  definition of membership.
+  **Table RLS verified against a real Postgres engine**, same methodology
+  as Phase 2 (local Postgres, stubbed `auth` schema, two simulated tenant
+  users in real transactions). **Storage bucket policies could not be
+  verified the same way** during development — `storage.objects`/
+  `storage.buckets` are Supabase Storage infrastructure, not part of plain
+  Postgres — but have since been exercised live against the user's real
+  Supabase project (upload and signed-URL "View" both confirmed working;
+  see the post-delivery fix below for the one real bug that surfaced
+  during that check).
+- `apps/api`: `app/repositories/documents.py` (Storage upload +
+  `documents` row insert — not one atomic transaction, since Storage and
+  Postgres are separate systems; a failed insert after a successful upload
+  orphans the Storage object, accepted for now since nothing lists Storage
+  directly), `app/services/documents.py` (HTTP-agnostic, so it's reusable
+  by a future background worker), `app/api/documents.py`
+  (`POST/GET /organizations/{id}/audit-periods/{id}/documents`, multipart
+  upload with content-type allowlist + size-cap validation before anything
+  touches storage — PDF/DOCX/XLSX/CSV, 50MB default, both centralized in
+  `Settings`). 6 new tests (upload success, unsupported content-type,
+  empty file, oversized file, list, auth-required) plus a pre-existing
+  Phase 2 test (`test_tampered_signature_is_rejected`) fixed for a genuine
+  flaky-test bug found while running the suite: base64url's final
+  character of a trailing partial byte group carries decoder-discarded
+  padding bits, so the old last-character toggle had a ~1/4 chance of
+  leaving the decoded signature unchanged. 20/20 tests now pass
+  consistently (verified over repeated runs).
+- `apps/web`: `/organizations/[orgId]/audit-periods/[auditPeriodId]`
+  (document list with a "View" link per row using a short-lived signed
+  URL, upload form for file + document type). Audit periods on the org
+  page now link to this new page instead of being plain text. Uploads go
+  through a Server Action that forwards the browser's `FormData` straight
+  to `apps/api` — fixed a real bug found while wiring this up:
+  `lib/api.ts`'s `apiFetch` unconditionally set
+  `Content-Type: application/json` whenever a request body was present,
+  which would have silently broken multipart uploads by overriding the
+  boundary `fetch` sets automatically for `FormData` bodies.
+- Malware scanning is explicitly **not implemented** this phase — no
+  scanning service is chosen yet, and building a stub would be exactly the
+  placeholder the project rules prohibit. Documented as a known gap.
+
+**Verified**: `apps/api` — 20/20 tests, ruff, mypy strict all clean.
+`apps/web` — `npm run build` and `npm run lint` both clean.
+
+**Known limitations** (documented, not silently skipped):
+- No `document_versions`/re-upload workflow — SOC reports and bridge
+  letters are treated as static evidence uploaded once per audit period;
+  deferred until a concrete versioning need shows up.
+- No malware scanning (see above).
+
+### Post-delivery fix: Storage requests were running as anon, not the caller
+
+Found live against a real Supabase project, once uploads were finally
+exercisable: every upload failed with a Storage `403 new row violates
+row-level security policy`, even for a genuine org member.
+
+Root cause, confirmed by reading the installed `supabase-py` SDK's own
+source (not guessed): `get_user_client()` built the client with the anon
+key, then called `client.postgrest.auth(access_token)` to scope it to the
+caller. That call only patches the already-constructed `postgrest`
+sub-client's headers. `client.storage` (and `client.functions`) are
+built lazily, straight from `self.options.headers`, the first time
+they're accessed — and `.postgrest.auth()` never touches that dict. So
+every Storage request went out carrying only the anon key, Postgres saw
+an anonymous caller for `auth.uid()` inside the Storage RLS policies, and
+`is_organization_member()` correctly rejected it. Table reads/writes
+never hit this, since `postgrest`'s own headers were patched directly —
+only Storage (and, latently, `functions`, unused so far) was affected.
+
+Fix: `get_user_client()` now passes the caller's token via
+`ClientOptions(headers={"Authorization": f"Bearer {access_token}"})` at
+`create_client()` time, so every sub-client — not just `postgrest` —
+is built already scoped to the real caller. One mechanism for "who is
+this client acting as," not two.
+
+**Confirmed fixed live**: after the fix, upload succeeded and the
+returned signed URL opened the document. This is the first time the full
+stack — auth, org/audit-period creation, document upload, Storage RLS,
+and the signed-URL view — has been exercised end-to-end as one running
+system rather than piecewise (migration logic locally, each app via its
+own test suite).
+
 ## Phase roadmap (for visibility — not scoped until each one starts)
 
 1. ~~Project foundation~~ (Phase 1, complete)
 2. ~~Auth + organizations + audit periods~~ (Phase 2, complete)
-3. Document upload and storage
+3. ~~Document upload and storage~~ (Phase 3, complete)
 4. Document extraction pipeline
 5. AI control/CUEC/exception extraction
 6. Internal control framework

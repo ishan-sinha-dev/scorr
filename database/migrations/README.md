@@ -9,3 +9,7 @@ migration mechanism for the one database, not two competing ones.
   the `create_organization()` RPC. See
   `docs/architecture/phase0-assessment.md` for the design notes and how
   this was validated before shipping.
+- `0002_documents.sql` (Phase 3): `documents` table + RLS, and a private
+  `documents` Storage bucket with path-scoped Storage policies. See
+  `docs/architecture/phase0-assessment.md` for the design notes and known
+  gap (Storage policies unverified against a real Supabase project).

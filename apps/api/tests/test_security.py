@@ -72,7 +72,16 @@ def test_wrong_audience_is_rejected() -> None:
 
 def test_tampered_signature_is_rejected() -> None:
     token = _make_token()
-    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    # Tamper the second-to-last character, not the last one: base64url's
+    # final character of a trailing partial byte group carries some
+    # decoder-discarded padding bits, so toggling *that* specific character
+    # can leave the decoded signature bytes unchanged ~1/4 of the time
+    # (flaky pass instead of a real assertion). The second-to-last
+    # character is always fully significant, so this always changes the
+    # decoded signature.
+    index = -2
+    tampered_char = "A" if token[index] != "A" else "B"
+    tampered = token[:index] + tampered_char + token[index + 1 :]
     with _patched_jwks_client(), pytest.raises(HTTPException) as exc_info:
         get_current_user(_credentials(tampered))
 

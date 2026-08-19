@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { apiFetch } from "@/lib/api";
@@ -60,11 +61,16 @@ export default async function OrganizationAuditPeriodsPage({
 
       <ul className="divide-y divide-border rounded-md border border-border">
         {periods.map((period) => (
-          <li key={period.id} className="px-4 py-3 text-sm text-foreground">
-            {period.name}
-            <span className="ml-2 text-muted-foreground">
-              {period.period_start} – {period.period_end}
-            </span>
+          <li key={period.id}>
+            <Link
+              href={`/organizations/${orgId}/audit-periods/${period.id}`}
+              className="block px-4 py-3 text-sm text-foreground hover:bg-muted"
+            >
+              {period.name}
+              <span className="ml-2 text-muted-foreground">
+                {period.period_start} – {period.period_end}
+              </span>
+            </Link>
           </li>
         ))}
         {periods.length === 0 && (

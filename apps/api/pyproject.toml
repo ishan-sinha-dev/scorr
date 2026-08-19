@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings>=2.15",
     "supabase>=2.31",
     "pyjwt[crypto]>=2.13",
+    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]

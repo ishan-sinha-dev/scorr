@@ -24,5 +24,16 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6379/0"
 
+    # Document upload (Phase 3). Centralized here, not hardcoded at the
+    # call site, so the limit/allowlist can change without touching
+    # validation logic.
+    max_upload_size_bytes: int = 50 * 1024 * 1024  # 50MB
+    allowed_upload_content_types: tuple[str, ...] = (
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/csv",
+    )
+
 
 settings = Settings()

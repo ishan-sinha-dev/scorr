@@ -5,8 +5,8 @@ Every AI conclusion must trace back to source evidence (document, page,
 section) — see `docs/architecture/phase0-assessment.md` for the full
 architecture assessment and phased delivery plan.
 
-**Status:** Phase 2 (auth + organizations + audit periods) complete. No
-document upload or AI code yet — those are Phase 3+.
+**Status:** Phase 3 (document upload and storage) complete. No document
+extraction or AI code yet — those are Phase 4+.
 
 ## Structure
 
@@ -25,10 +25,13 @@ Supabase directly for auth (login/session). See
 
 1. Create a project at [supabase.com](https://supabase.com) (or use an
    existing one).
-2. In the SQL editor, run
-   `database/migrations/0001_organizations_users_audit_periods.sql`.
-3. Copy `.env.example` to `.env` and fill in the project's URL and anon
-   key (Project Settings → API). Never commit `.env`.
+2. In the SQL editor, run each migration in `database/migrations/` in
+   order: `0001_organizations_users_audit_periods.sql`, then
+   `0002_documents.sql`.
+3. Get the project's URL, anon key, and service-role key (Project Settings
+   → API), and set up each app's own env file — see Configuration below.
+   `.env.example` at the repo root is a reference template only; each app
+   loads its env from its own directory, not from the repo root.
 
 ## Running locally
 
@@ -58,10 +61,37 @@ docker compose up redis
 
 ## Configuration
 
-`.env` is read by both apps: `apps/api` via `pydantic-settings`
-(`apps/api/app/core/config.py`), `apps/web` via `NEXT_PUBLIC_*` vars read at
-request time (`apps/web/lib/env.ts`). OpenAI key isn't required until
-Phase 5.
+The repo-root `.env.example` is a reference for what variables exist — it
+is not read directly. Each app looks for its env file in its own
+directory (this is how `pydantic-settings` and Next.js resolve env files:
+relative to the process's working directory / the app's own root, not the
+monorepo root), so create two files:
+
+**`apps/api/.env`** (read via `pydantic-settings`,
+`apps/api/app/core/config.py`):
+```
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_ANON_KEY=<anon key>
+SUPABASE_SERVICE_ROLE_KEY=<service role key>
+REDIS_URL=redis://localhost:6379/0
+```
+
+**`apps/web/.env.local`** (Next.js's convention for local, uncommitted env
+vars — read via `apps/web/lib/env.ts`):
+```
+NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+Both `.env` and `.env.local` are gitignored everywhere in this repo.
+`OPENAI_API_KEY` (in `apps/api/.env`) isn't required until Phase 5.
+
+By default, Supabase requires a user to confirm their email before they
+can sign in — after signing up at `/login` for the first time, check the
+inbox for that address (or, for faster local testing, turn off "Confirm
+email" under Authentication → Providers → Email in the Supabase
+dashboard).
 
 ## Validation
 
