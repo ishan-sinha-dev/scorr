@@ -1,0 +1,15 @@
+# Local dev services only. Supabase (Postgres/Auth/Storage) is a hosted
+# project, not run here — see docs/architecture/phase0-assessment.md.
+# Redis is added now because apps/api's settings already reference
+# REDIS_URL; the Celery worker itself arrives in Phase 4.
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:

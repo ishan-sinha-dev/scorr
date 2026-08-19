@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "socrr-api"
+version = "0.1.0"
+description = "SOCRR API — SOC report review backend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.141",
+    "uvicorn[standard]>=0.52",
+    "pydantic-settings>=2.15",
+    "supabase>=2.31",
+    "pyjwt[crypto]>=2.13",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.16",
+    "mypy>=2.3",
+    "pytest>=9.1",
+    "httpx>=0.28",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# B008 (function call in default arg) is FastAPI's own dependency-injection
+# idiom (`Depends(...)` as a default) — flagging it is a false positive here.
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
