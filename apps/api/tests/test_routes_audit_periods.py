@@ -60,3 +60,61 @@ def test_create_audit_period_rejects_invalid_range() -> None:
         app.dependency_overrides.clear()
 
     assert response.status_code == 422
+
+
+def test_delete_audit_period_returns_204() -> None:
+    period_id = "33333333-3333-3333-3333-333333333333"
+    fake_row = {
+        "id": period_id,
+        "organization_id": _ORG_ID,
+        "name": "FY2026",
+        "period_start": "2026-01-01",
+        "period_end": "2026-12-31",
+        "created_by": _FAKE_USER.id,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    fake_client = MagicMock()
+    fake_table = fake_client.table.return_value
+    fake_table.select.return_value.eq.return_value.single.return_value.execute.return_value.data = (
+        fake_row
+    )
+    fake_table.delete.return_value.eq.return_value.execute.return_value.data = [fake_row]
+
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[get_current_user_client] = lambda: fake_client
+    try:
+        response = client.delete(f"/organizations/{_ORG_ID}/audit-periods/{period_id}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 204
+
+
+def test_delete_audit_period_rejects_non_creator_non_owner() -> None:
+    # RLS-scoped delete matches zero rows for a member who's neither the
+    # creator nor an org owner — must surface as 403, never a silent 204.
+    period_id = "33333333-3333-3333-3333-333333333333"
+    fake_row = {
+        "id": period_id,
+        "organization_id": _ORG_ID,
+        "name": "FY2026",
+        "period_start": "2026-01-01",
+        "period_end": "2026-12-31",
+        "created_by": "99999999-9999-9999-9999-999999999999",
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    fake_client = MagicMock()
+    fake_table = fake_client.table.return_value
+    fake_table.select.return_value.eq.return_value.single.return_value.execute.return_value.data = (
+        fake_row
+    )
+    fake_table.delete.return_value.eq.return_value.execute.return_value.data = []
+
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[get_current_user_client] = lambda: fake_client
+    try:
+        response = client.delete(f"/organizations/{_ORG_ID}/audit-periods/{period_id}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403

@@ -1,8 +1,13 @@
 from supabase import Client
 
+from app.repositories import document_pages as document_pages_repo
 from app.repositories import documents as documents_repo
+from app.schemas.document_pages import DocumentPageOut
 from app.schemas.documents import DocumentOut, DocumentType
 from app.services import audit_log
+from app.services.extraction import EXTRACTABLE_CONTENT_TYPES
+from app.workers.ai_extraction import run_structured_extraction
+from app.workers.extraction import extract_document_task
 
 
 def upload_document(
@@ -15,10 +20,11 @@ def upload_document(
     content: bytes,
     content_type: str,
     uploaded_by: str,
+    access_token: str,
 ) -> DocumentOut:
     """HTTP-agnostic: size/content-type validation happens in app/api/documents.py
     before this is called, so this stays reusable by a future background
-    worker (Phase 4+) that isn't behind an HTTP request at all.
+    worker that isn't behind an HTTP request at all.
     """
     row = documents_repo.upload_and_register(
         client,
@@ -39,6 +45,14 @@ def upload_document(
         organization_id=organization_id,
         metadata={"file_name": file_name, "document_type": document_type},
     )
+    if content_type in EXTRACTABLE_CONTENT_TYPES:
+        # Marked 'pending' synchronously, before enqueueing, so the document
+        # list shows real state immediately rather than leaving the column
+        # NULL (indistinguishable from "not applicable") until a worker
+        # happens to pick the task up.
+        document_pages_repo.set_extraction_status(client, document_id=row["id"], status="pending")
+        row["extraction_status"] = "pending"
+        extract_document_task.delay(row["id"], access_token)
     view_url = documents_repo.create_signed_url(client, storage_path=row["storage_path"])
     return DocumentOut.model_validate({**row, "view_url": view_url})
 
@@ -56,3 +70,21 @@ def list_documents(client: Client, *, audit_period_id: str) -> list[DocumentOut]
         )
         for row in rows
     ]
+
+
+def list_document_pages(client: Client, *, document_id: str) -> list[DocumentPageOut]:
+    rows = document_pages_repo.list_pages(client, document_id=document_id)
+    return [DocumentPageOut.model_validate(row) for row in rows]
+
+
+def get_document(client: Client, *, document_id: str) -> DocumentOut:
+    row = documents_repo.get_document(client, document_id=document_id)
+    view_url = documents_repo.create_signed_url(client, storage_path=row["storage_path"])
+    return DocumentOut.model_validate({**row, "view_url": view_url})
+
+
+def analyze_document(client: Client, *, document_id: str, access_token: str) -> None:
+    """HTTP-agnostic: the document_type gate (only soc_report/bridge_letter
+    are analyzable) lives in app/api/documents.py, matching where Phase 3's
+    content-type/size validation lives — this function only enqueues."""
+    run_structured_extraction.delay(document_id, access_token)

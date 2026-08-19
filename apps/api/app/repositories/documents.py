@@ -71,6 +71,15 @@ def list_documents(client: Client, *, audit_period_id: str) -> list[dict[str, An
     return cast(list[dict[str, Any]], response.data)
 
 
+def get_document(client: Client, *, document_id: str) -> dict[str, Any]:
+    response = client.table("documents").select("*").eq("id", document_id).single().execute()
+    return cast(dict[str, Any], response.data)
+
+
+def download(client: Client, *, storage_path: str) -> bytes:
+    return client.storage.from_(_BUCKET).download(storage_path)
+
+
 def create_signed_url(client: Client, *, storage_path: str) -> str:
     response = client.storage.from_(_BUCKET).create_signed_url(
         storage_path, _SIGNED_URL_TTL_SECONDS

@@ -21,3 +21,15 @@ export async function createAuditPeriod(organizationId: string, formData: FormDa
 
   revalidatePath(`/organizations/${organizationId}`);
 }
+
+export async function deleteAuditPeriod(organizationId: string, auditPeriodId: string) {
+  const response = await apiFetch(`/organizations/${organizationId}/audit-periods/${auditPeriodId}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to delete audit period (${response.status})`);
+  }
+
+  revalidatePath(`/organizations/${organizationId}`);
+}

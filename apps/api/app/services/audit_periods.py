@@ -36,3 +36,25 @@ def create_audit_period(
 def list_audit_periods(client: Client, *, organization_id: str) -> list[AuditPeriodOut]:
     rows = audit_periods_repo.list_audit_periods(client, organization_id=organization_id)
     return [AuditPeriodOut.model_validate(row) for row in rows]
+
+
+def delete_audit_period(
+    client: Client, *, organization_id: str, audit_period_id: str, actor_user_id: str
+) -> None:
+    period = audit_periods_repo.get_audit_period(client, audit_period_id=audit_period_id)
+    deleted = audit_periods_repo.delete_audit_period(client, audit_period_id=audit_period_id)
+    if not deleted:
+        # RLS matched 0 rows: a member who isn't the creator or an org
+        # owner. Raised explicitly rather than returning as if it worked.
+        raise PermissionError(
+            "Only the audit period's creator or an organization owner can delete it"
+        )
+    audit_log.record(
+        client,
+        actor_user_id=actor_user_id,
+        action="audit_period.deleted",
+        entity_type="audit_period",
+        entity_id=audit_period_id,
+        organization_id=organization_id,
+        metadata={"name": period["name"]},
+    )

@@ -14,6 +14,11 @@ dependencies = [
     "supabase>=2.31",
     "pyjwt[crypto]>=2.13",
     "python-multipart>=0.0.20",
+    "celery[redis]>=5.5",
+    "pdfplumber>=0.11",
+    "python-docx>=1.1",
+    "openai>=1.60",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +42,18 @@ ignore = ["B008"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+[[tool.mypy.overrides]]
+# Celery ships no py.typed marker / stubs; its @task decorator is
+# consequently untyped from mypy's point of view no matter how the task
+# function itself is annotated.
+module = ["celery.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# openpyxl ships no py.typed marker / stubs either.
+module = ["openpyxl.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

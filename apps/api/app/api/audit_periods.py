@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from supabase import Client
 
 from app.core.security import AuthUser, get_current_user
@@ -27,3 +27,21 @@ def list_audit_periods(
     client: Client = Depends(get_current_user_client),
 ) -> list[AuditPeriodOut]:
     return audit_periods_service.list_audit_periods(client, organization_id=organization_id)
+
+
+@router.delete("/{audit_period_id}", status_code=204)
+def delete_audit_period(
+    organization_id: str,
+    audit_period_id: str,
+    user: AuthUser = Depends(get_current_user),
+    client: Client = Depends(get_current_user_client),
+) -> None:
+    try:
+        audit_periods_service.delete_audit_period(
+            client,
+            organization_id=organization_id,
+            audit_period_id=audit_period_id,
+            actor_user_id=user.id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc

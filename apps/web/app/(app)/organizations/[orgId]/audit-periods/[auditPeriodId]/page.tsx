@@ -2,7 +2,18 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { apiFetch } from "@/lib/api";
-import { uploadDocument } from "./actions";
+import { Badge } from "@/components/badge";
+import {
+  analyzeDocument,
+  carryForwardControls,
+  mapControls,
+  parseInternalControls,
+  uploadDocument,
+} from "./actions";
+
+const ANALYZABLE_DOCUMENT_TYPES = new Set(["soc_report", "bridge_letter"]);
+
+type ExtractionStatus = "pending" | "processing" | "complete" | "failed";
 
 type Document = {
   id: string;
@@ -10,6 +21,7 @@ type Document = {
   file_name: string;
   created_at: string;
   view_url: string;
+  extraction_status: ExtractionStatus | null;
 };
 
 const DOCUMENT_TYPE_LABELS: Record<Document["document_type"], string> = {
@@ -18,33 +30,81 @@ const DOCUMENT_TYPE_LABELS: Record<Document["document_type"], string> = {
   internal_control_framework: "Internal control framework",
 };
 
+// Extraction runs async (Celery) — this badge is the only signal in the UI
+// that it's happened at all, so a document that's stuck 'pending' because
+// no worker is running is visible, not silently invisible.
+const EXTRACTION_STATUS_LABELS: Record<ExtractionStatus, string> = {
+  pending: "Extraction pending",
+  processing: "Extracting…",
+  complete: "Extracted",
+  failed: "Extraction failed",
+};
+
+type InternalControl = {
+  id: string;
+  control_id: string | null;
+  description: string;
+  extraction_method: "deterministic" | "ai";
+  requires_review: boolean;
+};
+
+type AuditPeriod = {
+  id: string;
+  name: string;
+};
+
 export default async function AuditPeriodDocumentsPage({
   params,
 }: {
   params: Promise<{ orgId: string; auditPeriodId: string }>;
 }) {
   const { orgId, auditPeriodId } = await params;
-  const response = await apiFetch(
-    `/organizations/${orgId}/audit-periods/${auditPeriodId}/documents`
-  );
+  const [response, controlsResponse, periodsResponse] = await Promise.all([
+    apiFetch(`/organizations/${orgId}/audit-periods/${auditPeriodId}/documents`),
+    apiFetch(`/organizations/${orgId}/audit-periods/${auditPeriodId}/internal-controls`),
+    apiFetch(`/organizations/${orgId}/audit-periods`),
+  ]);
 
   if (response.status === 403 || response.status === 404) {
     notFound();
   }
 
   const documents: Document[] = response.ok ? await response.json() : [];
+  const internalControls: InternalControl[] = controlsResponse.ok
+    ? await controlsResponse.json()
+    : [];
+  const otherPeriods: AuditPeriod[] = periodsResponse.ok
+    ? (await periodsResponse.json()).filter((p: AuditPeriod) => p.id !== auditPeriodId)
+    : [];
   const uploadForThisPeriod = uploadDocument.bind(null, orgId, auditPeriodId);
+  const carryForwardForThisPeriod = carryForwardControls.bind(null, orgId, auditPeriodId);
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
-      <div>
-        <Link
-          href={`/organizations/${orgId}`}
-          className="text-sm text-muted-foreground hover:underline"
-        >
-          ← Audit periods
-        </Link>
-        <h1 className="mt-1 text-lg font-semibold text-foreground">Documents</h1>
+      <div className="flex items-center justify-between">
+        <div>
+          <Link
+            href={`/organizations/${orgId}`}
+            className="text-sm text-muted-foreground hover:underline"
+          >
+            ← Audit periods
+          </Link>
+          <h1 className="mt-1 text-lg font-semibold text-foreground">Documents</h1>
+        </div>
+        <div className="flex items-center gap-4">
+          <Link
+            href={`/organizations/${orgId}/compare?to=${auditPeriodId}`}
+            className="text-sm text-muted-foreground hover:underline"
+          >
+            Compare periods
+          </Link>
+          <Link
+            href={`/organizations/${orgId}/audit-periods/${auditPeriodId}/findings`}
+            className="text-sm text-primary hover:underline"
+          >
+            Findings →
+          </Link>
+        </div>
       </div>
 
       <form action={uploadForThisPeriod} className="grid grid-cols-1 gap-3 sm:grid-cols-4">
@@ -84,21 +144,119 @@ export default async function AuditPeriodDocumentsPage({
                 {DOCUMENT_TYPE_LABELS[doc.document_type]} ·{" "}
                 {new Date(doc.created_at).toLocaleDateString()}
               </span>
+              {doc.extraction_status && (
+                <span
+                  className={
+                    "ml-2 rounded-full px-2 py-0.5 text-xs " +
+                    (doc.extraction_status === "failed"
+                      ? "bg-destructive/10 text-destructive"
+                      : doc.extraction_status === "complete"
+                        ? "bg-primary/10 text-primary"
+                        : "bg-muted text-muted-foreground")
+                  }
+                >
+                  {EXTRACTION_STATUS_LABELS[doc.extraction_status]}
+                </span>
+              )}
             </span>
-            <a
-              href={doc.view_url}
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary hover:underline"
-            >
-              View
-            </a>
+            <span className="flex items-center gap-3">
+              {ANALYZABLE_DOCUMENT_TYPES.has(doc.document_type) &&
+                doc.extraction_status === "complete" && (
+                  <form action={analyzeDocument.bind(null, orgId, auditPeriodId, doc.id)}>
+                    <button type="submit" className="text-primary hover:underline">
+                      Analyze
+                    </button>
+                  </form>
+                )}
+              {doc.document_type === "internal_control_framework" && (
+                <form action={parseInternalControls.bind(null, orgId, auditPeriodId, doc.id)}>
+                  <button type="submit" className="text-primary hover:underline">
+                    Parse internal controls
+                  </button>
+                </form>
+              )}
+              <a
+                href={doc.view_url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary hover:underline"
+              >
+                View
+              </a>
+            </span>
           </li>
         ))}
         {documents.length === 0 && (
           <li className="px-4 py-3 text-sm text-muted-foreground">No documents yet.</li>
         )}
       </ul>
+
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-foreground">Internal controls</h2>
+          <div className="flex items-center gap-3">
+            {otherPeriods.length > 0 && (
+              <form action={carryForwardForThisPeriod} className="flex items-center gap-2">
+                <select
+                  name="from_audit_period_id"
+                  required
+                  className="rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground"
+                >
+                  <option value="">Carry forward from…</option>
+                  {otherPeriods.map((period) => (
+                    <option key={period.id} value={period.id}>
+                      {period.name}
+                    </option>
+                  ))}
+                </select>
+                <button type="submit" className="text-sm text-primary hover:underline">
+                  Carry forward
+                </button>
+              </form>
+            )}
+            {internalControls.length > 0 && (
+              <form action={mapControls.bind(null, orgId, auditPeriodId)}>
+                <button type="submit" className="text-sm text-primary hover:underline">
+                  Map controls
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+        {internalControls.length > 0 ? (
+          <div className="mt-2 overflow-x-auto rounded-md border border-border">
+            <table className="w-full text-sm text-foreground">
+              <thead>
+                <tr className="border-b border-border bg-muted/50 text-left text-muted-foreground">
+                  <th className="px-4 py-2 font-medium">Control ID</th>
+                  <th className="px-4 py-2 font-medium">Description</th>
+                  <th className="px-4 py-2 font-medium">Source</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {internalControls.map((control) => (
+                  <tr key={control.id}>
+                    <td className="px-4 py-2 font-medium">{control.control_id ?? "—"}</td>
+                    <td className="px-4 py-2">{control.description}</td>
+                    <td className="px-4 py-2">
+                      <span className="flex items-center gap-2">
+                        <Badge tone="blue">
+                          {control.extraction_method === "ai" ? "AI extracted" : "Spreadsheet"}
+                        </Badge>
+                        {control.requires_review && <Badge tone="yellow">Needs review</Badge>}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-2 rounded-md border border-border px-4 py-3 text-sm text-muted-foreground">
+            No internal controls parsed yet.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

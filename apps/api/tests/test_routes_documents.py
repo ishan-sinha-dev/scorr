@@ -7,7 +7,7 @@ Supabase project; see database/migrations/0002_documents.sql).
 """
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -60,11 +60,12 @@ def test_upload_document_returns_201() -> None:
     app.dependency_overrides[get_current_user] = _override_user
     app.dependency_overrides[get_current_user_client] = lambda: fake_client
     try:
-        response = client.post(
-            _UPLOAD_URL,
-            data={"document_type": "soc_report"},
-            files={"file": ("report.pdf", b"content", "application/pdf")},
-        )
+        with patch("app.services.documents.extract_document_task") as fake_task:
+            response = client.post(
+                _UPLOAD_URL,
+                data={"document_type": "soc_report"},
+                files={"file": ("report.pdf", b"content", "application/pdf")},
+            )
     finally:
         app.dependency_overrides.clear()
 
@@ -73,6 +74,43 @@ def test_upload_document_returns_201() -> None:
     assert body["file_name"] == "report.pdf"
     assert body["view_url"] == "https://signed.example/report.pdf"
     fake_client.storage.from_.return_value.upload.assert_called_once()
+    # PDF is an extractable content type: Phase 4's pipeline must be queued,
+    # and the document should already report 'pending' in the response
+    # rather than leaving extraction_status NULL until a worker picks it up.
+    assert body["extraction_status"] == "pending"
+    fake_task.delay.assert_called_once_with(_DOC_ID, _FAKE_USER.access_token)
+
+
+def test_upload_document_does_not_queue_extraction_for_csv() -> None:
+    fake_row = {
+        "id": _DOC_ID,
+        "organization_id": _ORG_ID,
+        "audit_period_id": _PERIOD_ID,
+        "document_type": "internal_control_framework",
+        "file_name": "controls.csv",
+        "storage_path": f"{_ORG_ID}/{_PERIOD_ID}/{_DOC_ID}-controls.csv",
+        "file_size_bytes": 7,
+        "content_type": "text/csv",
+        "uploaded_by": _FAKE_USER.id,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    fake_client = _fake_client_for_upload(fake_row)
+
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[get_current_user_client] = lambda: fake_client
+    try:
+        with patch("app.services.documents.extract_document_task") as fake_task:
+            response = client.post(
+                _UPLOAD_URL,
+                data={"document_type": "internal_control_framework"},
+                files={"file": ("controls.csv", b"content", "text/csv")},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 201
+    assert response.json()["extraction_status"] is None
+    fake_task.delay.assert_not_called()
 
 
 def test_upload_document_rejects_unsupported_content_type() -> None:
@@ -159,3 +197,88 @@ def test_list_documents_returns_signed_urls() -> None:
 def test_documents_require_authentication() -> None:
     response = client.get(_UPLOAD_URL)
     assert response.status_code in (401, 403)
+
+
+def test_list_document_pages_returns_rows() -> None:
+    fake_page = {
+        "id": "55555555-5555-5555-5555-555555555555",
+        "document_id": _DOC_ID,
+        "page_number": 1,
+        "text": "Page one text",
+        "needs_ocr": False,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    fake_client = MagicMock()
+    query = fake_client.table.return_value.select.return_value.eq.return_value.order.return_value
+    query.execute.return_value.data = [fake_page]
+
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[get_current_user_client] = lambda: fake_client
+    try:
+        response = client.get(f"{_UPLOAD_URL}/{_DOC_ID}/pages")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["text"] == "Page one text"
+
+
+def _fake_document_row(
+    document_type: str, content_type: str = "application/pdf"
+) -> dict[str, object]:
+    return {
+        "id": _DOC_ID,
+        "organization_id": _ORG_ID,
+        "audit_period_id": _PERIOD_ID,
+        "document_type": document_type,
+        "file_name": "report.pdf",
+        "storage_path": f"{_ORG_ID}/{_PERIOD_ID}/{_DOC_ID}-report.pdf",
+        "file_size_bytes": 7,
+        "content_type": content_type,
+        "uploaded_by": _FAKE_USER.id,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def test_analyze_document_queues_for_soc_report() -> None:
+    fake_client = MagicMock()
+    single_query = fake_client.table.return_value.select.return_value.eq.return_value.single
+    single_query.return_value.execute.return_value.data = _fake_document_row("soc_report")
+    fake_client.storage.from_.return_value.create_signed_url.return_value = {
+        "signedURL": "https://signed.example/report.pdf"
+    }
+
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[get_current_user_client] = lambda: fake_client
+    try:
+        with patch("app.services.documents.run_structured_extraction") as fake_task:
+            response = client.post(f"{_UPLOAD_URL}/{_DOC_ID}/analyze")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 202
+    fake_task.delay.assert_called_once_with(_DOC_ID, _FAKE_USER.access_token)
+
+
+def test_analyze_document_rejects_internal_control_framework() -> None:
+    fake_client = MagicMock()
+    single_query = fake_client.table.return_value.select.return_value.eq.return_value.single
+    single_query.return_value.execute.return_value.data = _fake_document_row(
+        "internal_control_framework", content_type="text/csv"
+    )
+    fake_client.storage.from_.return_value.create_signed_url.return_value = {
+        "signedURL": "https://signed.example/controls.csv"
+    }
+
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[get_current_user_client] = lambda: fake_client
+    try:
+        with patch("app.services.documents.run_structured_extraction") as fake_task:
+            response = client.post(f"{_UPLOAD_URL}/{_DOC_ID}/analyze")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    fake_task.delay.assert_not_called()

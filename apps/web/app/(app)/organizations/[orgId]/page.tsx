@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { apiFetch } from "@/lib/api";
-import { createAuditPeriod } from "./actions";
+import { createAuditPeriod, deleteAuditPeriod } from "./actions";
+import { DeleteAuditPeriodButton } from "./delete-audit-period-button";
 
 type AuditPeriod = {
   id: string;
@@ -61,16 +62,19 @@ export default async function OrganizationAuditPeriodsPage({
 
       <ul className="divide-y divide-border rounded-md border border-border">
         {periods.map((period) => (
-          <li key={period.id}>
+          <li key={period.id} className="flex items-center justify-between px-4 py-3">
             <Link
               href={`/organizations/${orgId}/audit-periods/${period.id}`}
-              className="block px-4 py-3 text-sm text-foreground hover:bg-muted"
+              className="flex-1 text-sm text-foreground hover:underline"
             >
               {period.name}
               <span className="ml-2 text-muted-foreground">
                 {period.period_start} – {period.period_end}
               </span>
             </Link>
+            <form action={deleteAuditPeriod.bind(null, orgId, period.id)}>
+              <DeleteAuditPeriodButton periodName={period.name} />
+            </form>
           </li>
         ))}
         {periods.length === 0 && (

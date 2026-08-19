@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 DocumentType = Literal["soc_report", "bridge_letter", "internal_control_framework"]
+ExtractionStatus = Literal["pending", "processing", "complete", "failed"]
 
 
 class DocumentOut(BaseModel):
@@ -20,3 +21,7 @@ class DocumentOut(BaseModel):
     # populated by the service layer rather than mapped straight off the
     # DB row the way the other fields are.
     view_url: str
+    # NULL for content types this pipeline doesn't run on (e.g. XLSX/CSV) —
+    # see database/migrations/0003_document_pages_extraction.sql.
+    extraction_status: ExtractionStatus | None = None
+    extraction_error: str | None = None
